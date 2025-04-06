@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced File Manager</title>
+    <style>
+        :root {
+            --download-color: #2ecc71;
+            --delete-color: #e74c3c;
+            --hover-darken: 10%;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .upload-container {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .file-item:hover {
+            transform: translateY(-2px);
+        }
+        .file-info {
+            display: flex;
+            flex-direction: column;
+        }
+        .file-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .file-meta {
+            font-size: 0.85em;
+            color: #666;
+        }
+        .file-actions {
+            display: flex;
+            gap: 12px;
+        }
+        button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .download-btn {
+            background-color: var(--download-color);
+            color: white;
+        }
+        .download-btn:hover {
+            background-color: color-mix(in srgb, var(--download-color) var(--hover-darken), black);
+        }
+        .delete-btn {
+            background-color: var(--delete-color);
+            color: white;
+        }
+        .delete-btn:hover {
+            background-color: color-mix(in srgb, var(--delete-color) var(--hover-darken), black);
+        }
+        #fileInput {
+            width: 100%;
+            margin: 15px 0;
+        }
+        .progress-container {
+            margin-top: 15px;
+            display: none;
+        }
+        progress {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+        }
+        .drag-drop {
+            border: 2px dashed #3498db;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            background-color: #f0f8ff;
+        }
+        h2, h3 {
+            color: #2c3e50;
+        }
+        .status-message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="upload-container">
+        <h2>📁 File Manager</h2>
+        <div class="drag-drop" id="dropZone">
+            <p>Drag & drop files here or</p>
+            <input type="file" id="fileInput">
+            <button onclick="document.getElementById('fileInput').click()">Browse Files</button>
+        </div>
+        <div class="progress-container" id="uploadProgress">
+            <p>Uploading: <span id="fileName"></span></p>
+            <progress id="progressBar" value="0" max="100"></progress>
+            <p id="progressText">0%</p>
+        </div>
+        <div id="statusMessage" class="status-message"></div>
+    </div>
+
+    <h3>📋 Your Files:</h3>
+    <div id="savedItemsList"></div>
+
+    <script>
+        // Enhanced file manager with drag-drop and better UI
+        let fileDatabase = {};
+        const MAX_FILE_SIZE = 1024 * 1024 * 1024 * 5; // 5GB limit
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFiles();
+            setupDragDrop();
+        });
+
+        // Load saved files
+        function loadFiles() {
+            const savedMetadata = JSON.parse(localStorage.getItem('fileMetadata') || '[]');
+            fileDatabase = savedMetadata.reduce((acc, file) => {
+                acc[file.name] = file;
+                return acc;
+            }, {});
+            renderFileList();
+        }
+
+        // Save files
+        function saveFile(file) {
+            if (!file) return;
+            
+            if (file.size > MAX_FILE_SIZE) {
+                showMessage(`File too large (max ${formatFileSize(MAX_FILE_SIZE)})`, 'error');
+                return;
+            }
+
+            showUploadProgress(file.name);
+            
+            // Store file reference
+            fileDatabase[file.name] = {
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                lastDownloaded: null,
+                fileObject: file
+            };
+
+            // Simulate upload (in real app, would be actual upload progress)
+            simulateUpload(() => {
+                saveMetadata();
+                renderFileList();
+                showMessage(`"${file.name}" saved successfully!`, 'success');
+            });
+        }
+
+        // Drag and drop setup
+        function setupDragDrop() {
+            const dropZone = document.getElementById('dropZone');
+            
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, preventDefaults, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, highlight, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, unhighlight, false);
+            });
+
+            dropZone.addEventListener('drop', handleDrop, false);
+            
+            // Also handle regular file input
+            document.getElementById('fileInput').addEventListener('change', handleFiles, false);
+        }
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function highlight() {
+            document.getElementById('dropZone').style.backgroundColor = '#e1f0ff';
+        }
+
+        function unhighlight() {
+            document.getElementById('dropZone').style.backgroundColor = '#f0f8ff';
+        }
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles({ target: { files } });
+        }
+
+        function handleFiles(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                saveFile(files[0]);
+            }
+        }
+
+        // UI Functions
+        function showUploadProgress(filename) {
+            const progressContainer = document.getElementById('uploadProgress');
+            document.getElementById('fileName').textContent = filename;
+            progressContainer.style.display = 'block';
+        }
+
+        function simulateUpload(callback) {
+            let progress = 0;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            
+            const interval = setInterval(() => {
+                progress += Math.random() * 15;
+                if (progress >= 100) {
+                    progress = 100;
+                    clearInterval(interval);
+                    progressBar.value = progress;
+                    progressText.textContent = '100%';
+                    setTimeout(() => {
+                        document.getElementById('uploadProgress').style.display = 'none';
+                        if (callback) callback();
+                    }, 500);
+                } else {
+                    progressBar.value = progress;
+                    progressText.textContent = `${Math.round(progress)}%`;
+                }
+            }, 100);
+        }
+
+        function renderFileList() {
+            const list = document.getElementById('savedItemsList');
+            list.innerHTML = '';
+            
+            const files = Object.values(fileDatabase);
+            
+            if (files.length === 0) {
+                list.innerHTML = '<p>No files saved yet. Upload some files to get started!</p>';
+                return;
+            }
+            
+            files.forEach(file => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                
+                fileItem.innerHTML = `
+                    <div class="file-info">
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-meta">
+                            ${file.type} • ${formatFileSize(file.size)} • 
+                            ${file.lastDownloaded ? `Last downloaded: ${new Date(file.lastDownloaded).toLocaleString()}` : 'Not downloaded yet'}
+                        </div>
+                    </div>
+                    <div class="file-actions">
+                        <button class="download-btn" onclick="downloadFile('${file.name}')">⬇️ Download</button>
+                        <button class="delete-btn" onclick="confirmDelete('${file.name}')">🗑️ Delete</button>
+                    </div>
+                `;
+                
+                list.appendChild(fileItem);
+            });
+        }
+
+        function downloadFile(filename) {
+            const file = fileDatabase[filename];
+            if (!file) return;
+            
+            // Check if previously downloaded
+            if (file.lastDownloaded) {
+                if (!confirm(`You already downloaded this file on ${new Date(file.lastDownloaded).toLocaleString()}.\nDo you want to download it again?`)) {
+                    return;
+                }
+            }
+            
+            // Create download link
+            const url = URL.createObjectURL(file.fileObject);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            
+            // Cleanup
+            setTimeout(() => {
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+            
+            // Update last downloaded time
+            file.lastDownloaded = new Date().toISOString();
+            saveMetadata();
+            renderFileList();
+            
+            showMessage(`"${file.name}" download started!`, 'success');
+        }
+
+        function confirmDelete(filename) {
+            if (!confirm(`Are you sure you want to permanently delete "${filename}"?`)) return;
+            deleteFile(filename);
+        }
+
+        function deleteFile(filename) {
+            delete fileDatabase[filename];
+            saveMetadata();
+            renderFileList();
+            showMessage(`"${filename}" has been deleted.`, 'success');
+        }
+
+        function saveMetadata() {
+            const metadata = Object.values(fileDatabase).map(({ name, type, size, lastDownloaded }) => 
+                ({ name, type, size, lastDownloaded }));
+            localStorage.setItem('fileMetadata', JSON.stringify(metadata));
+        }
+
+        function showMessage(text, type) {
+            const msg = document.getElementById('statusMessage');
+            msg.textContent = text;
+            msg.className = `status-message ${type}`;
+            msg.style.display = 'block';
+            setTimeout(() => msg.style.display = 'none', 3000);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat(bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>
